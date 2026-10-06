@@ -40,6 +40,40 @@ function showPage(id) {
   if (id === 'slidebox') setTimeout(resetViewer, 20);
 }
 
+const systemCards = [...document.querySelectorAll('.system[data-system]')];
+const slideSearch = document.getElementById('slideSearch');
+const systemFilter = document.getElementById('systemFilter');
+const slideResultCount = document.getElementById('slideResultCount');
+const clearSlideFilters = document.getElementById('clearSlideFilters');
+
+function updateSystemSearch() {
+  const q = (slideSearch?.value || '').trim().toLowerCase();
+  const filter = systemFilter?.value || 'All';
+  let visible = 0;
+  systemCards.forEach(card => {
+    const name = (card.dataset.system || '').toLowerCase();
+    const matchesText = !q || name.includes(q) || card.textContent.toLowerCase().includes(q);
+    const matchesFilter = filter === 'All' || card.dataset.system === filter;
+    const show = matchesText && matchesFilter;
+    card.classList.toggle('is-hidden', !show);
+    if (show) visible += 1;
+  });
+  if (slideResultCount) slideResultCount.textContent = visible + (visible === 1 ? ' system' : ' systems');
+  const notice = document.getElementById('systemNotice');
+  if (notice && visible === 0) notice.textContent = 'No matching tissue or organ systems found. Try another search or clear the filters.';
+  else if (notice && notice.textContent.startsWith('No matching tissue')) notice.textContent = '';
+}
+
+slideSearch?.addEventListener('input', updateSystemSearch);
+systemFilter?.addEventListener('change', updateSystemSearch);
+clearSlideFilters?.addEventListener('click', () => {
+  if (slideSearch) slideSearch.value = '';
+  if (systemFilter) systemFilter.value = 'All';
+  updateSystemSearch();
+  slideSearch?.focus();
+});
+updateSystemSearch();
+
 window.openSystem = function openSystem(key) {
   const notice = document.getElementById('systemNotice');
   if (notice) notice.textContent = '';
@@ -86,6 +120,11 @@ function loadSlide(key) {
   document.getElementById('whatMeans').textContent = d.means;
   document.getElementById('whyMatters').textContent = d.matters;
   document.getElementById('clinical').innerHTML = d.clinical.map(x => '<li>'+x+'</li>').join('');
+  const metadata = document.getElementById('slideMetadata');
+  if (metadata) {
+    metadata.innerHTML = '<span><b>System</b>' + key + '</span><span><b>Slide</b>' + d.title + '</span><span><b>Viewer</b>Interactive</span>';
+  }
+  setViewerStatus('Loading slide…');
 
   const image = document.getElementById('slideImage');
   const thumbs = document.querySelector('.thumb-stack');
@@ -182,7 +221,16 @@ function resetViewer() {
   if (img.complete) fitSize();
   render();
 }
-img.addEventListener('load', resetViewer);
+img.addEventListener('load', () => { setViewerStatus(''); resetViewer(); });
+img.addEventListener('error', () => setViewerStatus('Unable to load this slide image. Try Reset View or choose another slide.', 'error'));
+function setViewerStatus(message, type='') {
+  const status = document.getElementById('viewerStatus');
+  if (!status) return;
+  status.textContent = message;
+  status.className = 'viewer-status' + (type ? ' ' + type : '');
+  status.hidden = !message;
+}
+setViewerStatus('Loading slide…');
 
 function changeZoom(f, px=viewer.clientWidth/2, py=viewer.clientHeight/2) {
   const old = zoom;
@@ -281,12 +329,27 @@ document.getElementById('siteSearch').addEventListener('submit', e => {
   e.preventDefault();
   const q = document.getElementById('searchInput').value.trim().toLowerCase();
   if (!q) return;
-  if (q.includes('cardio') || q.includes('heart') || q.includes('myocard')) {
-    loadSlide('Cardiovascular'); showPage('slidebox');
-  } else if (q.includes('respir') || q.includes('lung') || q.includes('alveol')) {
-    currentLungIndex = 0; loadSlide('Respiratory'); showPage('slidebox');
-  } else if (q.includes('quiz')) {
-    showPage('quiz');
+  const slideMatch = Object.entries(slideData).find(([key, d]) => {
+    const haystack = (key + ' ' + d.title + ' ' + d.sub).toLowerCase();
+    return haystack.includes(q);
+  });
+  if (slideMatch) {
+    const [key] = slideMatch;
+    if (key === 'Cardiovascular') {
+      loadSlide(key); showPage('slidebox'); return;
+    }
+    if (key === 'Respiratory') {
+      currentLungIndex = 0; loadSlide(key); showPage('slidebox'); return;
+    }
+  }
+  if (q.includes('quiz') || q.includes('practice')) { showPage('quiz'); return; }
+  if (q.includes('how to') || q.includes('help')) { showPage('howto'); return; }
+  if (q.includes('resource')) { showPage('resources'); return; }
+
+  if (slideSearch) {
+    slideSearch.value = q;
+    showPage('tissues');
+    updateSystemSearch();
   } else {
     showPage('tissues');
   }
@@ -316,18 +379,64 @@ const quizSets={
   {q:'Where are pulmonary capillaries found in relation to alveoli?',options:['Within alveolar septa','Inside the airway lumen','Only in the pleura','Inside cartilage'],correct:0,why:'Capillaries run within the thin alveolar septa, bringing blood close to the air space.'}
  ]}
 };
-let activeQuiz=null,quizIndex=0,quizScore=0,quizAnswered=false;
+let activeQuiz=null,activeQuizKey=null,quizIndex=0,quizScore=0,quizAnswered=false;
 const quizChooser=document.getElementById('quizChooser'),quizRunner=document.getElementById('quizRunner');
-function startQuiz(key){activeQuiz=quizSets[key];quizIndex=0;quizScore=0;quizAnswered=false;quizChooser.hidden=true;quizRunner.hidden=false;document.getElementById('quizTitle').textContent=activeQuiz.title;document.getElementById('quizBadge').textContent=activeQuiz.badge;document.getElementById('quizImage').src=activeQuiz.image;document.getElementById('quizImage').alt=activeQuiz.badge+' histology specimen';document.getElementById('quizImageLabel').textContent=activeQuiz.imageLabel;renderQuizQuestion();}
+function startQuiz(key){activeQuizKey=key;activeQuiz=quizSets[key];quizIndex=0;quizScore=0;quizAnswered=false;quizChooser.hidden=true;quizRunner.hidden=false;document.getElementById('quizTitle').textContent=activeQuiz.title;document.getElementById('quizBadge').textContent=activeQuiz.badge;document.getElementById('quizImage').src=activeQuiz.image;document.getElementById('quizImage').alt=activeQuiz.badge+' histology specimen';document.getElementById('quizImageLabel').textContent=activeQuiz.imageLabel;renderQuizQuestion();}
 function renderQuizQuestion(){const item=activeQuiz.questions[quizIndex];quizAnswered=false;document.getElementById('quizProgress').textContent=`Question ${quizIndex+1} of ${activeQuiz.questions.length}`;document.getElementById('quizScore').textContent=`${quizScore}/${quizIndex}`;document.getElementById('quizQuestionNumber').textContent=`Question ${quizIndex+1}`;document.getElementById('quizQuestion').textContent=item.q;const box=document.getElementById('quizOptions');box.innerHTML='';item.options.forEach((opt,i)=>{const b=document.createElement('button');b.type='button';b.className='quiz-option';b.textContent=String.fromCharCode(65+i)+'  '+opt;b.addEventListener('click',()=>answerQuiz(i));box.appendChild(b);});const f=document.getElementById('quizFeedback');f.className='quiz-feedback';f.textContent='Choose an answer to receive immediate feedback.';const next=document.getElementById('nextQuestion');next.disabled=true;next.textContent=quizIndex===activeQuiz.questions.length-1?'Finish Quiz →':'Next Question →';}
 function answerQuiz(choice){if(quizAnswered)return;quizAnswered=true;const item=activeQuiz.questions[quizIndex];const correct=choice===item.correct;if(correct)quizScore++;document.querySelectorAll('#quizOptions .quiz-option').forEach((b,i)=>{b.disabled=true;if(i===item.correct)b.classList.add('correct');else if(i===choice)b.classList.add('incorrect');});const f=document.getElementById('quizFeedback');f.className='quiz-feedback '+(correct?'correct':'incorrect');f.innerHTML=`<b>${correct?'Correct!':'Not quite.'}</b> ${item.why}`;document.getElementById('quizScore').textContent=`${quizScore}/${quizIndex+1}`;document.getElementById('nextQuestion').disabled=false;}
-function finishQuiz(){const runner=document.getElementById('quizRunner');runner.innerHTML=`<div class="quiz-question-card" style="max-width:760px;margin:20px auto"><span class="badge">${activeQuiz.badge}</span><h2 style="font:700 32px Georgia;margin:8px 0">Quiz complete</h2><p style="color:var(--muted);font-size:17px">You scored <strong>${quizScore} / ${activeQuiz.questions.length}</strong>.</p><div class="quiz-complete">Review the slide in the Slide Box, then try the quiz again to reinforce the key structures.</div><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:18px"><button type="button" class="start-quiz" id="retryQuiz" style="width:auto">Try Again</button><button type="button" class="quiz-back" id="backFromComplete" style="padding:12px 4px">← All Quizzes</button></div></div>`;document.getElementById('retryQuiz').addEventListener('click',()=>{quizRunner.hidden=false;quizIndex=0;quizScore=0;renderQuizQuestion();});document.getElementById('backFromComplete').addEventListener('click',backToQuizHub);}
-function backToQuizHub(){quizRunner.hidden=true;quizChooser.hidden=false;activeQuiz=null;}
-document.querySelectorAll('.start-quiz[data-quiz]').forEach(b=>b.addEventListener('click',()=>startQuiz(b.dataset.quiz)));quizRunner.addEventListener('click',e=>{if(e.target.id==='nextQuestion'){if(quizIndex===activeQuiz.questions.length-1)finishQuiz();else{quizIndex++;renderQuizQuestion();}}});document.getElementById('quizBack')?.addEventListener('click',backToQuizHub);
+function saveQuizProgress() {
+  try {
+    const raw = localStorage.getItem('westernHistologyQuizProgress');
+    const entries = raw ? JSON.parse(raw) : [];
+    entries.unshift({
+      quiz: activeQuizKey,
+      badge: activeQuiz.badge,
+      score: quizScore,
+      total: activeQuiz.questions.length,
+      percent: Math.round((quizScore / activeQuiz.questions.length) * 100),
+      completedAt: new Date().toISOString()
+    });
+    localStorage.setItem('westernHistologyQuizProgress', JSON.stringify(entries.slice(0, 10)));
+  } catch (e) {
+    // Local progress is optional; the quiz remains usable if browser storage is unavailable.
+  }
+  renderLearningProgress();
+}
+function renderLearningProgress() {
+  const target = document.getElementById('progressSummary');
+  if (!target) return;
+  try {
+    const raw = localStorage.getItem('westernHistologyQuizProgress');
+    const entries = raw ? JSON.parse(raw) : [];
+    if (!entries.length) {
+      target.textContent = 'No quiz attempts saved on this device yet.';
+      return;
+    }
+    const latest = entries[0];
+    target.textContent = latest.badge + ' · ' + latest.score + '/' + latest.total + ' (' + latest.percent + '%) · ' + entries.length + ' saved attempt' + (entries.length === 1 ? '' : 's') + '.';
+  } catch (e) {
+    target.textContent = 'Local progress is unavailable in this browser.';
+  }
+}
+function finishQuiz(){saveQuizProgress();const runner=document.getElementById('quizRunner');runner.innerHTML=`<div class="quiz-question-card" style="max-width:760px;margin:20px auto"><span class="badge">${activeQuiz.badge}</span><h2 style="font:700 32px Georgia;margin:8px 0">Quiz complete</h2><p style="color:var(--muted);font-size:17px">You scored <strong>${quizScore} / ${activeQuiz.questions.length}</strong>.</p><div class="quiz-complete">Review the slide in the Slide Box, then try the quiz again to reinforce the key structures.</div><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:18px"><button type="button" class="start-quiz" id="retryQuiz" style="width:auto">Try Again</button><button type="button" class="quiz-back" id="backFromComplete" style="padding:12px 4px">← All Quizzes</button></div></div>`;document.getElementById('retryQuiz').addEventListener('click',()=>{quizRunner.hidden=false;quizIndex=0;quizScore=0;renderQuizQuestion();});document.getElementById('backFromComplete').addEventListener('click',backToQuizHub);}
+function clearLocalQuizProgress() {
+  try { localStorage.removeItem('westernHistologyQuizProgress'); } catch (e) {}
+  renderLearningProgress();
+}
+function backToQuizHub(){quizRunner.hidden=true;quizChooser.hidden=false;activeQuiz=null;activeQuizKey=null;renderLearningProgress();}
+document.querySelectorAll('.start-quiz[data-quiz]').forEach(b=>b.addEventListener('click',()=>startQuiz(b.dataset.quiz)));document.getElementById('clearLocalProgress')?.addEventListener('click', clearLocalQuizProgress);
+renderLearningProgress();quizRunner.addEventListener('click',e=>{if(e.target.id==='nextQuestion'){if(quizIndex===activeQuiz.questions.length-1)finishQuiz();else{quizIndex++;renderQuizQuestion();}}});document.getElementById('quizBack')?.addEventListener('click',backToQuizHub);
 
-// Initial state.
-document.querySelector('.system[data-system="Cardiovascular"]')?.setAttribute('tabindex','0');
-document.querySelector('.system[data-system="Respiratory"]')?.setAttribute('tabindex','0');
+// Initial state and keyboard accessibility.
+systemCards.forEach(card => {
+  card.setAttribute('tabindex', '0');
+  card.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      card.click();
+    }
+  });
+});
 
 
 (function(){
